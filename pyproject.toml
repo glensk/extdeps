@@ -1,0 +1,22 @@
+[project]
+name = "extdeps"
+version = "0.1.0"
+description = "Declare → resolve → fail-loud registry for external tool dependencies (sibling repos' scripts, system executables)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Albert Glensk" }]
+keywords = ["cli", "dependencies", "resolver", "which"]
+
+[project.urls]
+Homepage = "https://github.com/glensk/extdeps"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["extdeps"]
+
+[dependency-groups]
+dev = ["pytest>=8"]

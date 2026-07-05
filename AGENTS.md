@@ -4,32 +4,33 @@ Conventions for AI coding agents (and humans) working in this repo.
 
 ## What this is
 
-<one-line purpose of extdeps — TODO>
+`extdeps` — a tiny, pure-stdlib, pip/uv-installable package: declare → resolve →
+fail-loud registry for external tool dependencies (sibling repos' scripts,
+system executables). Consumer repos depend on it via
+`extdeps @ git+https://github.com/glensk/extdeps` and keep their own
+`EXTERNAL_DEPS` registry (data) next to their code. See `README.md`.
 
 ## Environment
 
 - Python projects use **`uv`** (preferred over Homebrew/system installs):
   `uv sync` to install, `uv run <cmd>` to run, `uv tool install <tool>` for CLIs.
-  Prefer pip/uv-installable packages (including wheels that bundle native libs)
-  over `brew install`; fall back to a system package manager only when no wheel
-  exists.
-- Secrets live in `.env` (never commit). See `.env.example`.
+- No runtime dependencies — the package must stay pure standard library.
+- Secrets live in `.env` (never commit). See `.env.example` (this library reads none).
 
 ## Build / test / lint
 
-- Python: `ruff format . && ruff check . && mypy . && pylint <files>`
-- Shell: `shellcheck <files>`
+- Tests: `uv run pytest`
+- Python: `ruff format . && ruff check . && mypy . && pylint extdeps tests`
 - Pre-commit: `pre-commit run --all-files` (gitleaks secret scan)
 
 ## Conventions
 
-- Every script supports `-h/--help`.
-- Keep external services / LLM providers pluggable; selection is config, not code.
-- Declare every external repo/script or system executable in `_tooling/external_deps.py`
-  (`EXTERNAL_DEPS`); resolve via `require()` / `resolve()`. Never use a bare
-  `shutil.which` or a hard-coded sibling path. Optional deps stay opt-in (the rest of
-  the tool works without them); a missing one a chosen feature needs exits 3. See
-  `~/obsidian/42-Git/README_INTERDEPENDENCIES.md`.
+- **API stability**: `Dep`, `resolve()`, `require()`, `MissingExternalDependency`
+  (exit code 3), `exit_on_missing()`, `is_noninteractive()` are the public
+  contract — multiple consumer repos float on `main`, so breaking changes need a
+  version bump + tag, and consumers should then pin `@<tag>`.
+- Behavior changes must be reflected in `tests/test_extdeps.py` (the single
+  behavior matrix consumers rely on instead of per-repo tests).
 
 ## Where things live
 

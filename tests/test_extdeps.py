@@ -8,6 +8,7 @@ import stat
 from pathlib import Path
 
 import pytest
+
 from extdeps import (
     Dep,
     MissingExternalDependency,

@@ -1,0 +1,47 @@
+# extdeps' own CI: the first caller of the reusable python-ci workflow, plus a
+# clean-install check that the built wheel imports outside the checkout.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Distinct from python-ci.yml's own group (prefixed `python-ci-`), so the two never deadlock.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-ci:
+    name: python-ci
+    uses: ./.github/workflows/python-ci.yml # zizmor: ignore[self-repository] -- documented `./` local call
+    with:
+      python-versions: '["3.10","3.11","3.12","3.13"]'
+
+  clean-install:
+    name: clean install (wheel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.10"
+          enable-cache: false
+      - name: Build wheel
+        run: uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+      - name: Install into a fresh venv and import
+        working-directory: ${{ runner.temp }}
+        run: |
+          uv venv --python 3.10 clean-venv
+          uv pip install --python clean-venv dist/*.whl
+          clean-venv/bin/python -c 'import extdeps, os, sys; print(extdeps.__file__); sys.exit("imported from checkout" if extdeps.__file__.startswith(os.environ["GITHUB_WORKSPACE"]) else 0)'

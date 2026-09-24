@@ -38,25 +38,28 @@ REPO_ROOT = Path(__file__).resolve().parent  # base for relative sibling paths
 EXTERNAL_DEPS = {
     "browser.py": Dep(
         name="browser.py",
-        command="browser.py",                 # $PATH lookup
-        env="BROWSER_PY_BIN",                 # per-user override (document in .env.example)
+        command="browser.py",  # $PATH lookup
+        env="BROWSER_PY_BIN",  # per-user override (document in .env.example)
         siblings=("../browser-login/bin/browser.py",),  # side-by-side clone layout
         root=REPO_ROOT,
-        requires_subcommand="login",          # capability probe: must appear in `-h`
+        requires_subcommand="login",  # capability probe: must appear in `-h`
         install_hint="Clone browser-login and put its bin/ on $PATH.",
     ),
 }
+
 
 def download_bills():
     # hard requirement of THIS feature — resolves or raises with a useful message
     browser = require(EXTERNAL_DEPS["browser.py"], needed_for="--download-bills")
     ...
 
+
 def enrich_output():
     # soft dependency — degrade gracefully
     browser = resolve(EXTERNAL_DEPS["browser.py"])
     if browser is None:
         return  # feature skipped, tool still works
+
 
 if __name__ == "__main__":
     try:

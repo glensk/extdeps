@@ -103,6 +103,10 @@ uv sync
 uv run pytest
 ```
 
+CI: `.github/workflows/ci.yml` calls the reusable
+`.github/workflows/python-ci.yml`, which other repos can call too. See
+[docs/ci.md](docs/ci.md).
+
 ## License
 
 Apache-2.0

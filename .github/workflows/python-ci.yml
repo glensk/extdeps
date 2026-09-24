@@ -1,0 +1,188 @@
+# Reusable CI for Python repos: lint (ruff, optional shellcheck), secret scan
+# (gitleaks), and install + test (+ optional mypy) across a Python matrix.
+# Callers: see docs/ci.md. Inputs reach `run:` scripts only via `env:`.
+name: python-ci
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: JSON list of Python versions for the test matrix.
+        type: string
+        default: '["3.11","3.12"]'
+      os:
+        description: Runner for the test matrix (e.g. ubuntu-latest, macos-latest).
+        type: string
+        default: ubuntu-latest
+      working-directory:
+        description: Directory containing the Python project.
+        type: string
+        default: .
+      install:
+        description: Install command. Empty = `uv sync --frozen --all-groups` (without --frozen if there is no uv.lock).
+        type: string
+        default: ""
+      test:
+        description: Test command. Empty = `uv run --frozen pytest -q` (without --frozen if there is no uv.lock).
+        type: string
+        default: ""
+      ruff-version:
+        description: ruff version run via uvx.
+        type: string
+        default: 0.16.2
+      ruff-args:
+        description: Extra `ruff check` args. Empty = repo config, or the owner fallback if the repo has none.
+        type: string
+        default: ""
+      mypy:
+        description: Full mypy command, run after install. Empty = skip.
+        type: string
+        default: ""
+      shellcheck:
+        description: Run shellcheck over tracked *.sh files.
+        type: boolean
+        default: false
+      gitleaks:
+        description: Secret-scan the checkout with gitleaks.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.working-directory }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          working-directory: ${{ inputs.working-directory }}
+      - id: ruff-check
+        name: ruff check
+        env:
+          RUFF_VERSION: ${{ inputs.ruff-version }}
+          RUFF_ARGS: ${{ inputs.ruff-args }}
+        run: |
+          ruff=(uvx "ruff@$RUFF_VERSION")
+          read -r -a args <<<"$RUFF_ARGS"  # whitespace-split, never globbed
+          if [ "${#args[@]}" -gt 0 ]; then
+            "${ruff[@]}" check "${args[@]}"
+          elif [ -f ruff.toml ] || [ -f .ruff.toml ] || grep -qs '^\[tool\.ruff' pyproject.toml; then
+            "${ruff[@]}" check
+          else
+            echo "No ruff config found; using the owner fallback rules."
+            "${ruff[@]}" check --isolated --select E,F,W,I --ignore E501 --target-version py310
+          fi
+      - id: ruff-format
+        name: ruff format --check
+        if: ${{ !cancelled() }}
+        env:
+          RUFF_VERSION: ${{ inputs.ruff-version }}
+        run: |
+          if [ -f ruff.toml ] || [ -f .ruff.toml ] || grep -qs '^\[tool\.ruff' pyproject.toml; then
+            uvx "ruff@$RUFF_VERSION" format --check
+          else
+            uvx "ruff@$RUFF_VERSION" format --check --isolated
+          fi
+      - id: shellcheck
+        name: shellcheck
+        if: ${{ !cancelled() && inputs.shellcheck }}
+        run: git ls-files -z -- '*.sh' | xargs -0 --no-run-if-empty shellcheck
+      - id: gitleaks
+        name: gitleaks
+        if: ${{ !cancelled() && inputs.gitleaks }}
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" dir --redact --no-banner .
+      - name: Summarize failures
+        if: ${{ failure() }}
+        env:
+          OUTCOMES: |
+            ruff check=${{ steps.ruff-check.outcome }}
+            ruff format --check=${{ steps.ruff-format.outcome }}
+            shellcheck=${{ steps.shellcheck.outcome }}
+            gitleaks=${{ steps.gitleaks.outcome }}
+        run: |
+          {
+            echo "### python-ci lint: failed steps"
+            sed -n 's/^\(.*\)=failure$/- \1/p' <<<"$OUTCOMES"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: test (${{ matrix.python-version }}, ${{ inputs.os }})
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          working-directory: ${{ inputs.working-directory }}
+      - id: install
+        name: install
+        env:
+          INSTALL: ${{ inputs.install }}
+        run: |
+          frozen=--frozen; [ -f uv.lock ] || frozen=
+          eval "${INSTALL:-uv sync $frozen --all-groups}"
+      - id: test
+        name: test
+        env:
+          TEST: ${{ inputs.test }}
+        run: |
+          frozen=--frozen; [ -f uv.lock ] || frozen=
+          eval "${TEST:-uv run $frozen pytest -q}"
+      - id: mypy
+        name: mypy
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && inputs.mypy != '' }}
+        env:
+          MYPY: ${{ inputs.mypy }}
+        run: eval "$MYPY"
+      - name: Summarize failures
+        if: ${{ failure() }}
+        env:
+          PY: ${{ matrix.python-version }}
+          OUTCOMES: |
+            install=${{ steps.install.outcome }}
+            test=${{ steps.test.outcome }}
+            mypy=${{ steps.mypy.outcome }}
+        run: |
+          {
+            echo "### python-ci test (Python $PY, $RUNNER_OS): failed steps"
+            sed -n 's/^\(.*\)=failure$/- \1/p' <<<"$OUTCOMES"
+          } >>"$GITHUB_STEP_SUMMARY"

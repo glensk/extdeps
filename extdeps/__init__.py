@@ -88,7 +88,7 @@ class Dep:  # pylint: disable=too-many-instance-attributes  # flat config record
     env: str = (
         ""  # per-user override var, e.g. "BROWSER_PY_BIN" / "..._ROOT" / "..._PATH"
     )
-    command: str = ""  # $PATH command to resolve (executables)
+    command: str = ""  # $PATH command; set = executable dep (candidates need X_OK)
     siblings: tuple[str, ...] = ()  # candidate paths, relative to `root` or absolute
     root: Path | None = None  # base dir for relative siblings (consumer repo root)
     interactive: bool = False  # needs TTY/GUI/Touch-ID → forbidden in CI / no-TTY
@@ -124,11 +124,16 @@ def resolve(dep: "Dep") -> str | None:
 
     Chain: (1) explicit env override → (2) $PATH (`shutil.which`) → (3) a
     conventional sibling candidate (per the side-by-side clone layout).
+
+    A dep with `command` set is an executable: a candidate must also pass
+    `os.access(path, os.X_OK)`, else it counts as missing (a non-executable
+    override → None; a non-executable sibling → try the next one). Deps without
+    `command` (directories, data files) only need to exist.
     """
     override = os.environ.get(dep.env) if dep.env else None
     if override:
         p = Path(os.path.expanduser(override))
-        return str(p) if p.exists() else None
+        return str(p) if _usable(p, dep) else None
     if dep.command:
         found = shutil.which(dep.command)
         if found:
@@ -136,9 +141,17 @@ def resolve(dep: "Dep") -> str | None:
     for rel in dep.siblings:
         rel_path = Path(os.path.expanduser(rel))
         cand = rel_path if rel_path.is_absolute() else (dep.root or Path()) / rel_path
-        if cand.exists():
+        if _usable(cand, dep):
             return str(cand.resolve())
     return None
+
+
+def _usable(path: Path, dep: "Dep") -> bool:
+    """A candidate counts only if it exists — and, for a command dep, is
+    executable (a non-executable script would fail at launch, not here)."""
+    if not path.exists():
+        return False
+    return not dep.command or os.access(path, os.X_OK)
 
 
 def _probe_ok(path: str, dep: "Dep") -> bool:

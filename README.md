@@ -79,6 +79,11 @@ if __name__ == "__main__":
    root; an installed package can't derive it, so the registry passes it).
    Declaring a relative sibling without `root` raises at construction time.
 
+**Executables must be executable**: a dep with `command` set is an executable,
+so an env-override or sibling candidate must also pass `os.access(path, X_OK)`.
+A non-executable file counts as missing (override → `None`; sibling → the next
+candidate). Deps without `command` (directories, data files) only need to exist.
+
 **Fail loud, fail useful**: `require()` raises `MissingExternalDependency`;
 `exit_on_missing()` at the CLI boundary prints *what's missing, which feature
 needs it, the override var, and how to get it*, then exits with code **3** —

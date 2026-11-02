@@ -102,6 +102,94 @@ def test_relative_sibling_without_root_raises_at_construction():
         Dep(name="tool", install_hint="x", siblings=("../other/tool",))
 
 
+def _make_plain_file(path: Path) -> Path:
+    path.write_text("#!/bin/sh\necho hi\n")
+    path.chmod(0o644)
+    return path
+
+
+# --- executability (command deps) ---------------------------------------------
+
+
+def test_command_dep_non_executable_sibling_not_resolved(tmp_path):
+    _make_plain_file(tmp_path / "tool")
+    dep = Dep(
+        name="tool",
+        install_hint="x",
+        command="definitely-not-a-real-command-xyz",
+        siblings=("tool",),
+        root=tmp_path,
+    )
+    assert resolve(dep) is None
+
+
+def test_command_dep_non_executable_sibling_falls_through_to_next(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    _make_plain_file(tmp_path / "a" / "tool")
+    target = _make_executable(tmp_path / "b" / "tool")
+    dep = Dep(
+        name="tool",
+        install_hint="x",
+        command="definitely-not-a-real-command-xyz",
+        siblings=("a/tool", "b/tool"),
+        root=tmp_path,
+    )
+    assert resolve(dep) == str(target.resolve())
+
+
+def test_command_dep_executable_sibling_resolved(tmp_path):
+    target = _make_executable(tmp_path / "tool")
+    dep = Dep(
+        name="tool",
+        install_hint="x",
+        command="definitely-not-a-real-command-xyz",
+        siblings=("tool",),
+        root=tmp_path,
+    )
+    assert resolve(dep) == str(target.resolve())
+
+
+def test_command_dep_non_executable_env_override_returns_none(tmp_path, monkeypatch):
+    target = _make_plain_file(tmp_path / "mytool")
+    monkeypatch.setenv("MYTOOL_BIN", str(target))
+    # treated like a set-but-missing override: no silent fall-through to $PATH
+    dep = Dep(name="mytool", install_hint="x", env="MYTOOL_BIN", command="sh")
+    assert resolve(dep) is None
+
+
+def test_command_dep_non_executable_raises_on_require(tmp_path):
+    _make_plain_file(tmp_path / "tool")
+    dep = Dep(
+        name="tool",
+        install_hint="x",
+        command="definitely-not-a-real-command-xyz",
+        siblings=("tool",),
+        root=tmp_path,
+    )
+    with pytest.raises(MissingExternalDependency):
+        require(dep, needed_for="--x")
+
+
+def test_non_command_dep_data_file_resolves_without_exec_bit(tmp_path):
+    target = _make_plain_file(tmp_path / "data.json")
+    dep = Dep(name="data", install_hint="x", siblings=("data.json",), root=tmp_path)
+    assert resolve(dep) == str(target.resolve())
+
+
+def test_non_command_dep_env_override_resolves_without_exec_bit(tmp_path, monkeypatch):
+    target = _make_plain_file(tmp_path / "data.json")
+    monkeypatch.setenv("DATA_PATH", str(target))
+    dep = Dep(name="data", install_hint="x", env="DATA_PATH")
+    assert resolve(dep) == str(target)
+
+
+def test_non_command_dep_directory_resolves(tmp_path):
+    (tmp_path / "other-repo").mkdir()
+    dep = Dep(name="repo", install_hint="x", siblings=("other-repo",), root=tmp_path)
+    assert resolve(dep) == str((tmp_path / "other-repo").resolve())
+
+
 def test_unresolvable_returns_none(tmp_path):
     dep = Dep(
         name="ghost",

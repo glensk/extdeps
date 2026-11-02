@@ -20,3 +20,13 @@ packages = ["extdeps"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
+
+# A project ruff config (the fallback user config's `src` is the caller's cwd, so a
+# check run from elsewhere filed `extdeps` as third-party: I001 in the tests). `select`
+# mirrors the pre-commit gate (E,F,W,I minus E501), as a project config replaces it.
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["extdeps"]

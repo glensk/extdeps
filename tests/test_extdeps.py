@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import extdeps
 from extdeps import (
     Dep,
     MissingExternalDependency,
@@ -234,6 +235,26 @@ def test_probe_failure_reports_outdated(tmp_path, monkeypatch):
     )
     with pytest.raises(MissingExternalDependency, match="outdated"):
         require(dep, needed_for="--flag")
+
+
+def test_probe_timeout_is_reported_as_a_timeout_not_outdated(tmp_path, monkeypatch):
+    target = tmp_path / "slowtool"
+    target.write_text("#!/bin/sh\nexec sleep 5\n")
+    target.chmod(target.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("SLOWTOOL_BIN", str(target))
+    monkeypatch.setattr(extdeps, "PROBE_TIMEOUT_S", 0.2)
+    dep = Dep(
+        name="slowtool",
+        install_hint="x",
+        env="SLOWTOOL_BIN",
+        requires_subcommand="prompt",
+    )
+    with pytest.raises(MissingExternalDependency) as exc_info:
+        require(dep, needed_for="--flag")
+    msg = exc_info.value.message()
+    assert "probe timed out" in msg
+    assert "lacks the required" not in msg
+    assert "outdated" not in msg
 
 
 def test_probe_success(tmp_path, monkeypatch):

@@ -154,18 +154,50 @@ def _usable(path: Path, dep: "Dep") -> bool:
     return not dep.command or os.access(path, os.X_OK)
 
 
-def _probe_ok(path: str, dep: "Dep") -> bool:
+#: Seconds the capability probe (`<dep> -h`) may take before it counts as
+#: timed out — a slow start is reported as such, never as an outdated tool.
+PROBE_TIMEOUT_S: float = 15
+
+
+def _probe_problem(path: str, dep: "Dep") -> str:
     """Cheap capability probe for in-house deps: the required subcommand must
-    appear in `<dep> -h`. Skipped when `requires_subcommand` is empty."""
+    appear in `<dep> -h`. ``""`` when it does (or `requires_subcommand` is
+    empty), else the detail for `MissingExternalDependency` — a probe that
+    timed out or could not start is named as such, so a slow `-h` is never
+    misreported as a missing subcommand."""
     if not dep.requires_subcommand:
-        return True
+        return ""
     try:
         res = subprocess.run(  # noqa: S603
-            [path, "-h"], capture_output=True, text=True, timeout=15, check=False
+            [path, "-h"],
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_S,
+            check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return dep.requires_subcommand in (res.stdout + res.stderr)
+    except subprocess.TimeoutExpired:
+        return (
+            f"found at {path}, but its capability probe `{Path(path).name} -h` "
+            f"timed out after {PROBE_TIMEOUT_S:g} s — probe timed out (the "
+            f"'{dep.requires_subcommand}' subcommand was not checked); retry, or "
+            "check why it starts so slowly."
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (
+            f"found at {path}, but its capability probe `{Path(path).name} -h` "
+            f"could not run: {exc}"
+        )
+    if dep.requires_subcommand in (res.stdout + res.stderr):
+        return ""
+    return (
+        f"found at {path}, but it lacks the required "
+        f"'{dep.requires_subcommand}' subcommand — likely an outdated version."
+    )
+
+
+def _probe_ok(path: str, dep: "Dep") -> bool:
+    """Whether the capability probe passed (see :func:`_probe_problem`)."""
+    return not _probe_problem(path, dep)
 
 
 def require(dep: "Dep", *, needed_for: str) -> str:
@@ -181,15 +213,9 @@ def require(dep: "Dep", *, needed_for: str) -> str:
     path = resolve(dep)
     if not path:
         raise MissingExternalDependency(dep, needed_for)
-    if not _probe_ok(path, dep):
-        raise MissingExternalDependency(
-            dep,
-            needed_for,
-            detail=(
-                f"found at {path}, but it lacks the required "
-                f"'{dep.requires_subcommand}' subcommand — likely an outdated version."
-            ),
-        )
+    problem = _probe_problem(path, dep)
+    if problem:
+        raise MissingExternalDependency(dep, needed_for, detail=problem)
     return path
 
 
